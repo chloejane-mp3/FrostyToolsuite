@@ -26,3 +26,4 @@ using System.Windows;
 
 [assembly: RegisterMenuExtension(typeof(MaterialMappingMenuExtension))]
 [assembly: RegisterMenuExtension(typeof(MaterialMappingSelectedMenuExtension))]
+[assembly: RegisterMenuExtension(typeof(TextureExportMenuExtension))]

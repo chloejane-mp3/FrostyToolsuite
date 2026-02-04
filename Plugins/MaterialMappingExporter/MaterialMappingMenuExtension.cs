@@ -8,15 +8,15 @@ using FrostySdk.Managers;
 
 namespace MaterialMappingPlugin
 {
-    // === Batch export: Tools > Batch Export > Export Material Mappings ===
+    // === Batch export: Tools > Material Mapping > Export All Material Mappings ===
     public class MaterialMappingMenuExtension : MenuExtension
     {
         internal static ImageSource imageSource = new ImageSourceConverter()
             .ConvertFromString("pack://application:,,,/FrostyEditor;component/Images/Export.png") as ImageSource;
 
         public override string TopLevelMenuName => "Tools";
-        public override string SubLevelMenuName => "Batch Export";
-        public override string MenuItemName => "Export Material Mappings";
+        public override string SubLevelMenuName => "Material Mapping";
+        public override string MenuItemName => "Export All Material Mappings";
         public override ImageSource Icon => imageSource;
 
         public override RelayCommand MenuItemClicked => new RelayCommand((o) =>
@@ -36,15 +36,15 @@ namespace MaterialMappingPlugin
         });
     }
 
-    // === Single selected mesh export: Tools > Export Selected Mesh Material Mapping ===
+    // === Single selected mesh export: Tools > Material Mapping > Export Selected Mesh ===
     public class MaterialMappingSelectedMenuExtension : MenuExtension
     {
         internal static ImageSource imageSource2 = new ImageSourceConverter()
             .ConvertFromString("pack://application:,,,/FrostyEditor;component/Images/Export.png") as ImageSource;
 
         public override string TopLevelMenuName => "Tools";
-        public override string SubLevelMenuName => null;
-        public override string MenuItemName => "Export Selected Mesh Material Mapping";
+        public override string SubLevelMenuName => "Material Mapping";
+        public override string MenuItemName => "Export Selected Mesh";
         public override ImageSource Icon => imageSource2;
 
         public override RelayCommand MenuItemClicked => new RelayCommand((o) =>
@@ -134,10 +134,10 @@ namespace MaterialMappingPlugin
                 return;
             }
 
-            if (selectedEntry.Type != "MeshAsset" && selectedEntry.Type != "RigidMeshAsset" && selectedEntry.Type != "SkinnedMeshAsset")
+            if (selectedEntry.Type != "MeshAsset" && selectedEntry.Type != "RigidMeshAsset" && selectedEntry.Type != "SkinnedMeshAsset" && selectedEntry.Type != "CompositeMeshAsset")
             {
                 MessageBox.Show(
-                    $"Selected asset is not a mesh type.\n\nType: {selectedEntry.Type}\nName: {selectedEntry.Name}\n\nPlease use a RigidMeshAsset, SkinnedMeshAsset, or MeshAsset.",
+                    $"Selected asset is not a mesh type.\n\nType: {selectedEntry.Type}\nName: {selectedEntry.Name}\n\nPlease use a RigidMeshAsset, SkinnedMeshAsset, MeshAsset, or CompositeMeshAsset.",
                     "Material Mapping Exporter",
                     MessageBoxButtons.OK,
                     MessageBoxIcon.Warning);
@@ -154,6 +154,34 @@ namespace MaterialMappingPlugin
                     string outputDir = folderDialog.SelectedPath;
                     MaterialMappingExporter exporter = new MaterialMappingExporter();
                     exporter.ExportSelectedMeshMaterialMapping(selectedEntry, outputDir);
+                }
+            }
+        });
+    }
+
+    // === Texture batch export: Tools > Material Mapping > Export All Textures ===
+    public class TextureExportMenuExtension : MenuExtension
+    {
+        internal static ImageSource imageSource3 = new ImageSourceConverter()
+            .ConvertFromString("pack://application:,,,/FrostyEditor;component/Images/Export.png") as ImageSource;
+
+        public override string TopLevelMenuName => "Tools";
+        public override string SubLevelMenuName => "Material Mapping";
+        public override string MenuItemName => "Export All Textures";
+        public override ImageSource Icon => imageSource3;
+
+        public override RelayCommand MenuItemClicked => new RelayCommand((o) =>
+        {
+            using (var folderDialog = new FolderBrowserDialog())
+            {
+                folderDialog.Description = "Select output directory for textures";
+                folderDialog.ShowNewFolderButton = true;
+
+                if (folderDialog.ShowDialog() == DialogResult.OK)
+                {
+                    string outputDir = folderDialog.SelectedPath;
+                    MaterialMappingExporter exporter = new MaterialMappingExporter();
+                    exporter.ExportAllTextures(outputDir, "tga");
                 }
             }
         });

@@ -12,6 +12,7 @@ using FrostySdk.Managers;
 using FrostySdk.Resources;
 using Newtonsoft.Json;
 using MeshSetPlugin.Resources;
+using TexturePlugin;
 
 namespace MaterialMappingPlugin
 {
@@ -65,7 +66,7 @@ namespace MaterialMappingPlugin
                 return;
             }
 
-            if (selectedEntry.Type != "MeshAsset" && selectedEntry.Type != "RigidMeshAsset" && selectedEntry.Type != "SkinnedMeshAsset")
+            if (selectedEntry.Type != "MeshAsset" && selectedEntry.Type != "RigidMeshAsset" && selectedEntry.Type != "SkinnedMeshAsset" && selectedEntry.Type != "CompositeMeshAsset")
             {
                 App.Logger.LogError($"[Material Mapping Exporter] Selected asset '{selectedEntry.Name}' is not a mesh (Type: {selectedEntry.Type})");
                 return;
@@ -121,7 +122,7 @@ namespace MaterialMappingPlugin
             // Count total meshes
             foreach (EbxAssetEntry entry in App.AssetManager.EnumerateEbx())
             {
-                if (entry.Type == "MeshAsset" || entry.Type == "RigidMeshAsset" || entry.Type == "SkinnedMeshAsset")
+                if (entry.Type == "MeshAsset" || entry.Type == "RigidMeshAsset" || entry.Type == "SkinnedMeshAsset" || entry.Type == "CompositeMeshAsset")
                     totalCount++;
             }
 
@@ -136,7 +137,7 @@ namespace MaterialMappingPlugin
 
                 foreach (EbxAssetEntry entry in App.AssetManager.EnumerateEbx())
                 {
-                    if (entry.Type == "MeshAsset" || entry.Type == "RigidMeshAsset" || entry.Type == "SkinnedMeshAsset")
+                    if (entry.Type == "MeshAsset" || entry.Type == "RigidMeshAsset" || entry.Type == "SkinnedMeshAsset" || entry.Type == "CompositeMeshAsset")
                     {
                         try
                         {
@@ -220,6 +221,7 @@ namespace MaterialMappingPlugin
             App.Logger.Log($"Exported {allMappings.Count} material mappings to {outputDirectory}");
             App.Logger.Log($"Skipped: {skippedNoMaterials} (no materials), {skippedNoTextures} (no textures)");
         }
+
 
         private MaterialMapping ExtractMaterialMapping(EbxAssetEntry meshEntry)
         {
@@ -706,6 +708,106 @@ namespace MaterialMappingPlugin
                     catch { }
                 }
             }
+        }
+
+        public void ExportAllTextures(string outputDirectory, string format = "tga")
+        {
+            int processedCount = 0;
+            int totalCount = 0;
+            int successCount = 0;
+            int failedCount = 0;
+
+            // Count total textures
+            foreach (EbxAssetEntry entry in App.AssetManager.EnumerateEbx("TextureAsset"))
+            {
+                totalCount++;
+            }
+
+            FrostyTaskWindow.Show("Exporting Textures", "", (task) =>
+            {
+                foreach (EbxAssetEntry entry in App.AssetManager.EnumerateEbx("TextureAsset"))
+                {
+                    try
+                    {
+                        task.Update($"Exporting {entry.Name}", (processedCount / (double)totalCount) * 100.0);
+
+                        // Get the texture EBX
+                        EbxAsset textureAsset = App.AssetManager.GetEbx(entry);
+                        dynamic textureObj = textureAsset.RootObject;
+
+                        // Get the texture resource
+                        ulong resRid = textureObj.Resource;
+                        ResAssetEntry resEntry = App.AssetManager.GetResEntry(resRid);
+                        
+                        if (resEntry == null)
+                        {
+                            App.Logger.LogWarning($"No resource found for texture: {entry.Name}");
+                            failedCount++;
+                            processedCount++;
+                            continue;
+                        }
+
+                        // Create output path preserving folder structure
+                        string relativePath = entry.Name.Replace('/', Path.DirectorySeparatorChar);
+                        string fullPath = Path.Combine(outputDirectory, relativePath);
+                        string directory = Path.GetDirectoryName(fullPath);
+
+                        if (!Directory.Exists(directory))
+                            Directory.CreateDirectory(directory);
+
+                        string outputPath = fullPath + "." + format.ToLower();
+
+                        // Load texture
+                        Texture texture = App.AssetManager.GetResAs<Texture>(resEntry);
+                        if (texture == null)
+                        {
+                            App.Logger.LogWarning($"Could not load texture resource: {entry.Name}");
+                            failedCount++;
+                            processedCount++;
+                            continue;
+                        }
+
+                        try
+                        {
+                            // Use Frosty's built-in TextureExporter
+                            TextureExporter exporter = new TextureExporter();
+                            string filterType = "*." + format.ToLower();
+                            exporter.Export(texture, outputPath, filterType);
+                            successCount++;
+                        }
+                        catch (Exception texEx)
+                        {
+                            App.Logger.LogError($"Error exporting texture {entry.Name}: {texEx.Message}");
+                            failedCount++;
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        App.Logger.LogError($"Failed to export texture {entry.Name}: {ex.Message}");
+                        failedCount++;
+                    }
+
+                    processedCount++;
+                }
+
+                // Export statistics
+                var stats = new
+                {
+                    TotalTextures = totalCount,
+                    SuccessfulExports = successCount,
+                    FailedExports = failedCount,
+                    ExportDate = DateTime.Now,
+                    Format = format
+                };
+
+                string statsPath = Path.Combine(outputDirectory, "texture_export_stats.json");
+                File.WriteAllText(statsPath, JsonConvert.SerializeObject(stats, Formatting.Indented));
+
+                task.Update("Export complete!", 100.0);
+            });
+
+            App.Logger.Log($"Exported {successCount} textures to {outputDirectory}");
+            App.Logger.Log($"Failed: {failedCount}");
         }
     }
 }

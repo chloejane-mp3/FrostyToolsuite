@@ -87,5 +87,8 @@
     <ProjectReference Include="..\MeshSetPlugin\MeshSetPlugin.csproj">
       <Private>false</Private>
     </ProjectReference>
+    <ProjectReference Include="..\TexturePlugin\TexturePlugin.csproj">
+      <Private>false</Private>
+    </ProjectReference>
   </ItemGroup>
 </Project>
