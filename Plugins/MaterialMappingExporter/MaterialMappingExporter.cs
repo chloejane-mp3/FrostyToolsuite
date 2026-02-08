@@ -30,6 +30,7 @@ namespace MaterialMappingPlugin
         public string MaterialPath { get; set; }
         public Guid MaterialGuid { get; set; }
         public int MaterialIndex { get; set; }
+        public string SectionName { get; set; }  // Matches FBX mesh part name (e.g., "Wall1", "BottomTrim")
         public Dictionary<string, TextureParameterInfo> Textures { get; set; } = new Dictionary<string, TextureParameterInfo>();
         public Dictionary<string, object> ScalarParameters { get; set; } = new Dictionary<string, object>();
         public Dictionary<string, float[]> VectorParameters { get; set; } = new Dictionary<string, float[]>();
@@ -256,6 +257,29 @@ namespace MaterialMappingPlugin
                     return null;
                 }
 
+                // Build a mapping of MaterialIndex -> Section Names
+                // Multiple sections can reference the same material, so we'll collect all section names
+                Dictionary<int, List<string>> materialToSectionNames = new Dictionary<int, List<string>>();
+                
+                if (meshSet != null && meshSet.Lods.Count > 0)
+                {
+                    // Use LOD0 for section names (highest detail)
+                    var lod0 = meshSet.Lods[0];
+                    foreach (var section in lod0.Sections)
+                    {
+                        if (!materialToSectionNames.ContainsKey(section.MaterialId))
+                        {
+                            materialToSectionNames[section.MaterialId] = new List<string>();
+                        }
+                        
+                        // Add section name if it's not empty
+                        if (!string.IsNullOrEmpty(section.Name))
+                        {
+                            materialToSectionNames[section.MaterialId].Add(section.Name);
+                        }
+                    }
+                }
+
                 Dictionary<int, MaterialInfo> materialDict = new Dictionary<int, MaterialInfo>();
 
                 for (int i = 0; i < meshObj.Materials.Count; i++)
@@ -270,6 +294,19 @@ namespace MaterialMappingPlugin
                             MaterialName = $"Material_{i}",
                             MaterialGuid = Guid.Empty
                         };
+
+                        // Add section name(s) that use this material
+                        // This matches the FBX mesh part names
+                        if (materialToSectionNames.ContainsKey(i) && materialToSectionNames[i].Count > 0)
+                        {
+                            // Use the first section name (most common case)
+                            // If multiple sections use same material, they'll all be listed
+                            matInfo.SectionName = string.Join(", ", materialToSectionNames[i]);
+                        }
+                        else
+                        {
+                            matInfo.SectionName = ""; // No section name found
+                        }
 
                         // Get the actual material - it's in the Internal property (or External if not internal)
                         dynamic material = null;
