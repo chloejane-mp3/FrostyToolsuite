@@ -44,7 +44,7 @@ namespace MaterialMappingPlugin
 
         public override string TopLevelMenuName => "Tools";
         public override string SubLevelMenuName => "Material Mapping";
-        public override string MenuItemName => "Export Selected Mesh";
+        public override string MenuItemName => "Export Single Material Mapping";
         public override ImageSource Icon => imageSource2;
 
         public override RelayCommand MenuItemClicked => new RelayCommand((o) =>
@@ -182,6 +182,58 @@ namespace MaterialMappingPlugin
                     string outputDir = folderDialog.SelectedPath;
                     MaterialMappingExporter exporter = new MaterialMappingExporter();
                     exporter.ExportAllTextures(outputDir, "tga");
+                }
+            }
+        });
+    }
+
+    // === FBX batch export: Tools > Material Mapping > Export All Meshes (FBX) ===
+    public class MeshFbxExportMenuExtension : MenuExtension
+    {
+        internal static ImageSource imageSource4 = new ImageSourceConverter()
+            .ConvertFromString("pack://application:,,,/FrostyEditor;component/Images/Export.png") as ImageSource;
+
+        public override string TopLevelMenuName => "Tools";
+        public override string SubLevelMenuName => "Material Mapping";
+        public override string MenuItemName => "Export All Meshes (FBX)";
+        public override ImageSource Icon => imageSource4;
+
+        public override RelayCommand MenuItemClicked => new RelayCommand((o) =>
+        {
+            var result = MessageBox.Show(
+                "Export all meshes as FBX for Unreal Engine?\n\n" +
+                "Settings:\n" +
+                "• Scale: 100x (Centimeters for Unreal)\n" +
+                "• LOD: Highest only (LOD0)\n" +
+                "• Parts: Kept separate for material mapping\n\n" +
+                "This may take a VERY long time. Continue?",
+                "Batch FBX Export",
+                MessageBoxButtons.YesNo,
+                MessageBoxIcon.Question);
+
+            if (result == DialogResult.Yes)
+            {
+                using (var folderDialog = new FolderBrowserDialog())
+                {
+                    folderDialog.Description = "Select output directory for FBX files";
+                    folderDialog.ShowNewFolderButton = true;
+
+                    if (folderDialog.ShowDialog() == DialogResult.OK)
+                    {
+                        string outputDir = folderDialog.SelectedPath;
+                        MeshBatchExporter fbxExporter = new MeshBatchExporter();
+                        fbxExporter.ExportAllMeshes(outputDir, unrealScale: true);
+
+                        MessageBox.Show(
+                            "FBX export complete!\n\n" +
+                            "Unreal Engine Import Settings:\n" +
+                            "• Import mesh scale: 1.0 (already scaled 100x)\n" +
+                            "• Materials: Use JSON mappings from earlier export\n" +
+                            "• Each FBX part corresponds to a material slot",
+                            "Export Complete",
+                            MessageBoxButtons.OK,
+                            MessageBoxIcon.Information);
+                    }
                 }
             }
         });
