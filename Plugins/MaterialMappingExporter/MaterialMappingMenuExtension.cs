@@ -8,14 +8,14 @@ using FrostySdk.Managers;
 
 namespace MaterialMappingPlugin
 {
-    // === Batch export: Tools > Material Mapping > Export All Material Mappings ===
+    // === Batch export: Tools > Batch Exporter > Export All Material Mappings ===
     public class MaterialMappingMenuExtension : MenuExtension
     {
         internal static ImageSource imageSource = new ImageSourceConverter()
             .ConvertFromString("pack://application:,,,/FrostyEditor;component/Images/Export.png") as ImageSource;
 
         public override string TopLevelMenuName => "Tools";
-        public override string SubLevelMenuName => "Material Mapping";
+        public override string SubLevelMenuName => "Batch Exporter";
         public override string MenuItemName => "Export All Material Mappings";
         public override ImageSource Icon => imageSource;
 
@@ -36,14 +36,14 @@ namespace MaterialMappingPlugin
         });
     }
 
-    // === Single selected mesh export: Tools > Material Mapping > Export Selected Mesh ===
+    // === Single selected mesh export: Tools > Batch Exporter > Export Selected Mesh ===
     public class MaterialMappingSelectedMenuExtension : MenuExtension
     {
         internal static ImageSource imageSource2 = new ImageSourceConverter()
             .ConvertFromString("pack://application:,,,/FrostyEditor;component/Images/Export.png") as ImageSource;
 
         public override string TopLevelMenuName => "Tools";
-        public override string SubLevelMenuName => "Material Mapping";
+        public override string SubLevelMenuName => "Batch Exporter";
         public override string MenuItemName => "Export Single Material Mapping";
         public override ImageSource Icon => imageSource2;
 
@@ -159,14 +159,14 @@ namespace MaterialMappingPlugin
         });
     }
 
-    // === Texture batch export: Tools > Material Mapping > Export All Textures ===
+    // === Texture batch export: Tools > Batch Exporter > Export All Textures ===
     public class TextureExportMenuExtension : MenuExtension
     {
         internal static ImageSource imageSource3 = new ImageSourceConverter()
             .ConvertFromString("pack://application:,,,/FrostyEditor;component/Images/Export.png") as ImageSource;
 
         public override string TopLevelMenuName => "Tools";
-        public override string SubLevelMenuName => "Material Mapping";
+        public override string SubLevelMenuName => "Batch Exporter";
         public override string MenuItemName => "Export All Textures";
         public override ImageSource Icon => imageSource3;
 
@@ -187,14 +187,14 @@ namespace MaterialMappingPlugin
         });
     }
 
-    // === FBX batch export: Tools > Material Mapping > Export All Meshes (FBX) ===
+    // === FBX batch export: Tools > Batch Exporter > Export All Meshes (FBX) ===
     public class MeshFbxExportMenuExtension : MenuExtension
     {
         internal static ImageSource imageSource4 = new ImageSourceConverter()
             .ConvertFromString("pack://application:,,,/FrostyEditor;component/Images/Export.png") as ImageSource;
 
         public override string TopLevelMenuName => "Tools";
-        public override string SubLevelMenuName => "Material Mapping";
+        public override string SubLevelMenuName => "Batch Exporter";
         public override string MenuItemName => "Export All Meshes (FBX)";
         public override ImageSource Icon => imageSource4;
 
@@ -227,7 +227,6 @@ namespace MaterialMappingPlugin
                         MessageBox.Show(
                             "FBX export complete!\n\n" +
                             "Unreal Engine Import Settings:\n" +
-                            "• Import mesh scale: 1.0 (already scaled 100x)\n" +
                             "• Materials: Use JSON mappings from earlier export\n" +
                             "• Each FBX part corresponds to a material slot",
                             "Export Complete",
