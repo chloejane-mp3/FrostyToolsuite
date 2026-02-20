@@ -31,9 +31,18 @@ namespace MaterialMappingPlugin
         public Guid MaterialGuid { get; set; }
         public int MaterialIndex { get; set; }
         public string SectionName { get; set; }  // Matches FBX mesh part name (e.g., "Wall1", "BottomTrim")
+        public UVTilingInfo UVTiling { get; set; }  // Parsed UV tiling information
         public Dictionary<string, TextureParameterInfo> Textures { get; set; } = new Dictionary<string, TextureParameterInfo>();
         public Dictionary<string, object> ScalarParameters { get; set; } = new Dictionary<string, object>();
         public Dictionary<string, float[]> VectorParameters { get; set; } = new Dictionary<string, float[]>();
+    }
+
+    public class UVTilingInfo
+    {
+        public float[] Tiling { get; set; }  // [U, V] tiling values (e.g., [2.0, 2.0] = 2x tiled)
+        public float[] Offset { get; set; }  // [U, V] offset values
+        public Dictionary<string, float[]> PerTextureTiling { get; set; } = new Dictionary<string, float[]>();  // Texture-specific tiling
+        public string Notes { get; set; }  // Human-readable tiling info
     }
 
     public class TextureParameterInfo
@@ -338,6 +347,7 @@ namespace MaterialMappingPlugin
                         if (material == null)
                         {
                             App.Logger.LogWarning($"  Material {i}: Could not resolve material (both Internal and External are null)");
+                            ParseUVTiling(matInfo);  // Parse tiling even for null materials
                             materialDict[i] = matInfo;
                             mapping.Materials.Add(matInfo);
                             continue;
@@ -586,6 +596,9 @@ namespace MaterialMappingPlugin
                             App.Logger.LogWarning($"  Still no textures after trying all methods including MeshVariationDbs");
                         }
 
+                        // Parse UV tiling information from vector parameters
+                        ParseUVTiling(matInfo);
+
                         materialDict[i] = matInfo;
                         mapping.Materials.Add(matInfo);
                     }
@@ -745,6 +758,80 @@ namespace MaterialMappingPlugin
                     catch { }
                 }
             }
+        }
+
+        /// <summary>
+        /// Parse UV tiling information from vector parameters
+        /// Common parameter names: Tiling, UVScale, TextureScale, DiffuseTiling, NormalTiling, etc.
+        /// </summary>
+        private void ParseUVTiling(MaterialInfo matInfo)
+        {
+            UVTilingInfo uvInfo = new UVTilingInfo();
+            List<string> notes = new List<string>();
+
+            // Check for common tiling parameter names
+            string[] tilingParams = { "Tiling", "UVScale", "TextureScale", "Scale", "UVTiling" };
+            string[] offsetParams = { "Offset", "UVOffset", "TextureOffset" };
+
+            // Find main tiling
+            foreach (var paramName in tilingParams)
+            {
+                if (matInfo.VectorParameters.ContainsKey(paramName))
+                {
+                    float[] vec = matInfo.VectorParameters[paramName];
+                    uvInfo.Tiling = new float[] { vec[0], vec[1] };
+                    notes.Add($"Tiling: {vec[0]}x{vec[1]} (from {paramName})");
+                    break;
+                }
+            }
+
+            // Find offset
+            foreach (var paramName in offsetParams)
+            {
+                if (matInfo.VectorParameters.ContainsKey(paramName))
+                {
+                    float[] vec = matInfo.VectorParameters[paramName];
+                    uvInfo.Offset = new float[] { vec[0], vec[1] };
+                    notes.Add($"Offset: [{vec[0]}, {vec[1]}] (from {paramName})");
+                    break;
+                }
+            }
+
+            // Check for per-texture tiling (e.g., DiffuseTiling, NormalTiling, RoughnessTiling)
+            string[] textureTypes = { "Diffuse", "Normal", "Specular", "Roughness", "Metallic", "AO", "Emissive", "Height", "Mask" };
+            foreach (var texType in textureTypes)
+            {
+                string tilingParam = texType + "Tiling";
+                string scaleParam = texType + "Scale";
+                
+                if (matInfo.VectorParameters.ContainsKey(tilingParam))
+                {
+                    float[] vec = matInfo.VectorParameters[tilingParam];
+                    uvInfo.PerTextureTiling[texType] = new float[] { vec[0], vec[1] };
+                    notes.Add($"{texType}: {vec[0]}x{vec[1]}");
+                }
+                else if (matInfo.VectorParameters.ContainsKey(scaleParam))
+                {
+                    float[] vec = matInfo.VectorParameters[scaleParam];
+                    uvInfo.PerTextureTiling[texType] = new float[] { vec[0], vec[1] };
+                    notes.Add($"{texType}: {vec[0]}x{vec[1]}");
+                }
+            }
+
+            // Set defaults if nothing found
+            if (uvInfo.Tiling == null)
+            {
+                uvInfo.Tiling = new float[] { 1.0f, 1.0f };
+                notes.Add("Tiling: 1x1 (default - no tiling parameter found)");
+            }
+
+            if (uvInfo.Offset == null)
+            {
+                uvInfo.Offset = new float[] { 0.0f, 0.0f };
+            }
+
+            uvInfo.Notes = string.Join("; ", notes);
+            matInfo.UVTiling = uvInfo;
         }
 
         public void ExportAllTextures(string outputDirectory, string format = "tga")
