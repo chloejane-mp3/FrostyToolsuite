@@ -32,6 +32,7 @@ namespace MaterialMappingPlugin
         public int MaterialIndex { get; set; }
         public string SectionName { get; set; }  // Matches FBX mesh part name (e.g., "Wall1", "BottomTrim")
         public UVTilingInfo UVTiling { get; set; }  // Parsed UV tiling information
+        public MaterialBlendInfo BlendInfo { get; set; }  // Texture layer blending information
         public Dictionary<string, TextureParameterInfo> Textures { get; set; } = new Dictionary<string, TextureParameterInfo>();
         public Dictionary<string, object> ScalarParameters { get; set; } = new Dictionary<string, object>();
         public Dictionary<string, float[]> VectorParameters { get; set; } = new Dictionary<string, float[]>();
@@ -43,6 +44,17 @@ namespace MaterialMappingPlugin
         public float[] Offset { get; set; }  // [U, V] offset values
         public Dictionary<string, float[]> PerTextureTiling { get; set; } = new Dictionary<string, float[]>();  // Texture-specific tiling
         public string Notes { get; set; }  // Human-readable tiling info
+    }
+
+    public class MaterialBlendInfo
+    {
+        public bool HasBlending { get; set; }
+        public int LayerCount { get; set; }
+        public string DetectedPattern { get; set; }  // "TriplanarDetail", "HeightBlend", "DetailBlend", etc.
+        public Dictionary<string, float> BlendParameters { get; set; } = new Dictionary<string, float>();
+        public Dictionary<string, float[]> BlendVectorParameters { get; set; } = new Dictionary<string, float[]>();
+        public Dictionary<int, List<string>> LayerTextures { get; set; } = new Dictionary<int, List<string>>();  // Layer index -> texture names
+        public string Notes { get; set; }
     }
 
     public class TextureParameterInfo
@@ -348,6 +360,7 @@ namespace MaterialMappingPlugin
                         {
                             App.Logger.LogWarning($"  Material {i}: Could not resolve material (both Internal and External are null)");
                             ParseUVTiling(matInfo);  // Parse tiling even for null materials
+                            DetectTextureBlending(matInfo);  // Detect blending even for null materials
                             materialDict[i] = matInfo;
                             mapping.Materials.Add(matInfo);
                             continue;
@@ -599,6 +612,9 @@ namespace MaterialMappingPlugin
                         // Parse UV tiling information from vector parameters
                         ParseUVTiling(matInfo);
 
+                        // Detect texture layer blending patterns
+                        DetectTextureBlending(matInfo);
+
                         materialDict[i] = matInfo;
                         mapping.Materials.Add(matInfo);
                     }
@@ -832,6 +848,183 @@ namespace MaterialMappingPlugin
 
             uvInfo.Notes = string.Join("; ", notes);
             matInfo.UVTiling = uvInfo;
+        }
+
+        /// <summary>
+        /// Detect texture layer blending patterns from material parameters
+        /// </summary>
+        private void DetectTextureBlending(MaterialInfo matInfo)
+        {
+            MaterialBlendInfo blendInfo = new MaterialBlendInfo();
+            List<string> notes = new List<string>();
+
+            // Check for TextureBlend boolean flag
+            bool hasTextureBlendFlag = false;
+            if (matInfo.ScalarParameters.ContainsKey("TextureBlend"))
+            {
+                if (matInfo.ScalarParameters["TextureBlend"] is bool boolVal)
+                    hasTextureBlendFlag = boolVal;
+            }
+
+            // Group textures by layer based on numeric suffix
+            Dictionary<int, List<string>> layerTextures = new Dictionary<int, List<string>>();
+            
+            foreach (var texEntry in matInfo.Textures)
+            {
+                string texName = texEntry.Key;
+                int layer = 0;
+
+                // Parse layer from suffix (BaseColor → layer 0, BaseColor2 → layer 1, etc.)
+                if (texName.EndsWith("2")) 
+                    layer = 1;
+                else if (texName.EndsWith("3")) 
+                    layer = 2;
+                else if (texName.EndsWith("4")) 
+                    layer = 3;
+                else if (texName.EndsWith("5"))
+                    layer = 4;
+
+                if (!layerTextures.ContainsKey(layer))
+                    layerTextures[layer] = new List<string>();
+
+                // Store base texture name (remove numeric suffix for cleaner output)
+                string baseName = texName;
+                if (layer > 0 && char.IsDigit(texName[texName.Length - 1]))
+                    baseName = texName.Substring(0, texName.Length - 1);
+                
+                layerTextures[layer].Add(texName);
+            }
+
+            blendInfo.LayerTextures = layerTextures;
+            blendInfo.LayerCount = layerTextures.Count;
+
+            // Extract blend control parameters
+            // Common scalar blend controls
+            string[] scalarBlendParams = 
+            { 
+                "DetailStrength", "BlendAmount", "NoiseStrength", "BlendStrength",
+                "HeightBlendContrast", "HeightBlendFalloff", "BlendSharpness",
+                "Layer1Strength", "Layer2Strength", "Layer3Strength"
+            };
+
+            foreach (var paramName in scalarBlendParams)
+            {
+                if (matInfo.ScalarParameters.ContainsKey(paramName))
+                {
+                    object value = matInfo.ScalarParameters[paramName];
+                    if (value is float floatVal)
+                    {
+                        blendInfo.BlendParameters[paramName] = floatVal;
+                    }
+                    else if (value is double doubleVal)
+                    {
+                        blendInfo.BlendParameters[paramName] = (float)doubleVal;
+                    }
+                }
+            }
+
+            // Common vector blend controls (Detail scale, blend ranges, etc.)
+            string[] vectorBlendParams = 
+            { 
+                "Detail", "DetailScale", "Layer2Scale", "Layer3Scale",
+                "BlendRange", "HeightBlendRange"
+            };
+
+            foreach (var paramName in vectorBlendParams)
+            {
+                if (matInfo.VectorParameters.ContainsKey(paramName))
+                {
+                    blendInfo.BlendVectorParameters[paramName] = matInfo.VectorParameters[paramName];
+                }
+            }
+
+            // Determine if blending is actually happening
+            blendInfo.HasBlending = (blendInfo.LayerCount > 1) || hasTextureBlendFlag;
+
+            if (!blendInfo.HasBlending)
+            {
+                blendInfo.DetectedPattern = "None";
+                blendInfo.Notes = "Single texture layer, no blending";
+                matInfo.BlendInfo = blendInfo;
+                return;
+            }
+
+            // Pattern recognition based on parameters and layer count
+            string pattern = "Unknown";
+
+            if (blendInfo.LayerCount == 2)
+            {
+                // Two-layer blending
+                if (blendInfo.BlendParameters.ContainsKey("NoiseStrength") && 
+                    blendInfo.BlendVectorParameters.ContainsKey("Detail"))
+                {
+                    pattern = "TriplanarDetail";
+                    notes.Add($"Triplanar detail blend with {blendInfo.LayerCount} layers");
+                    
+                    float detailStrength = blendInfo.BlendParameters.ContainsKey("DetailStrength") 
+                        ? blendInfo.BlendParameters["DetailStrength"] 
+                        : 0.5f;
+                    notes.Add($"Detail strength: {detailStrength}");
+                    notes.Add($"Noise strength: {blendInfo.BlendParameters["NoiseStrength"]}");
+                    
+                    if (blendInfo.BlendVectorParameters.ContainsKey("Detail"))
+                    {
+                        var detail = blendInfo.BlendVectorParameters["Detail"];
+                        notes.Add($"Detail scale: {detail[0]}x{detail[1]}");
+                    }
+                }
+                else if (blendInfo.BlendParameters.ContainsKey("HeightBlendContrast") ||
+                         blendInfo.BlendParameters.ContainsKey("HeightBlendFalloff") ||
+                         blendInfo.BlendVectorParameters.ContainsKey("HeightBlendRange"))
+                {
+                    pattern = "HeightBlend";
+                    notes.Add($"Height-based terrain blend with {blendInfo.LayerCount} layers");
+                }
+                else if (blendInfo.BlendParameters.ContainsKey("DetailStrength"))
+                {
+                    pattern = "DetailBlend";
+                    notes.Add($"Simple detail blend with strength {blendInfo.BlendParameters["DetailStrength"]}");
+                }
+                else
+                {
+                    pattern = "LayerBlend";
+                    notes.Add($"Generic {blendInfo.LayerCount}-layer blend");
+                }
+            }
+            else if (blendInfo.LayerCount >= 3)
+            {
+                // Multi-layer blending (3+ layers)
+                if (blendInfo.BlendParameters.ContainsKey("HeightBlendContrast"))
+                {
+                    pattern = "TerrainBlend";
+                    notes.Add($"Terrain blend with {blendInfo.LayerCount} layers");
+                }
+                else if (blendInfo.BlendParameters.ContainsKey("Layer1Strength") ||
+                         blendInfo.BlendParameters.ContainsKey("Layer2Strength"))
+                {
+                    pattern = "MultiLayerBlend";
+                    notes.Add($"Multi-layer blend with {blendInfo.LayerCount} layers and individual layer strengths");
+                }
+                else
+                {
+                    pattern = "ComplexBlend";
+                    notes.Add($"Complex blend with {blendInfo.LayerCount} layers");
+                }
+            }
+
+            // Add texture layer info to notes
+            for (int i = 0; i < blendInfo.LayerCount; i++)
+            {
+                if (layerTextures.ContainsKey(i))
+                {
+                    string layerName = i == 0 ? "Base" : $"Layer {i}";
+                    notes.Add($"{layerName}: {string.Join(", ", layerTextures[i])}");
+                }
+            }
+
+            blendInfo.DetectedPattern = pattern;
+            blendInfo.Notes = string.Join("; ", notes);
+            matInfo.BlendInfo = blendInfo;
         }
 
         public void ExportAllTextures(string outputDirectory, string format = "tga")
