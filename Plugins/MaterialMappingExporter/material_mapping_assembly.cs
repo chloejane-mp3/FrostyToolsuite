@@ -20,11 +20,13 @@ using System.Windows;
 // The following GUID is for the ID of the typelib if this project is exposed to COM
 [assembly: Guid("5c723579-0c7b-5415-99b6-166d4686fc4e")]
 
-[assembly: PluginDisplayName("Batch Exporter")]
-[assembly: PluginAuthor("Chloe")]
+[assembly: PluginDisplayName("Material Mapping Exporter")]
+[assembly: PluginAuthor("Custom")]
 [assembly: PluginVersion("1.0.0.0")]
 
 [assembly: RegisterMenuExtension(typeof(MaterialMappingMenuExtension))]
 [assembly: RegisterMenuExtension(typeof(MaterialMappingSelectedMenuExtension))]
 [assembly: RegisterMenuExtension(typeof(TextureExportMenuExtension))]
 [assembly: RegisterMenuExtension(typeof(MeshFbxExportMenuExtension))]
+[assembly: RegisterMenuExtension(typeof(LevelDataExportMenuExtension))]
+[assembly: RegisterMenuExtension(typeof(DiagnoseLayerBundlesMenuExtension))]

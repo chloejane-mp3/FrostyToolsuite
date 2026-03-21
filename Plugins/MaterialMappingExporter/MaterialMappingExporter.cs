@@ -33,6 +33,7 @@ namespace MaterialMappingPlugin
         public string SectionName { get; set; }  // Matches FBX mesh part name (e.g., "Wall1", "BottomTrim")
         public UVTilingInfo UVTiling { get; set; }  // Parsed UV tiling information
         public MaterialBlendInfo BlendInfo { get; set; }  // Texture layer blending information
+        public MeshUVChannelInfo UVChannelInfo { get; set; }  // UV channel assignments
         public Dictionary<string, TextureParameterInfo> Textures { get; set; } = new Dictionary<string, TextureParameterInfo>();
         public Dictionary<string, object> ScalarParameters { get; set; } = new Dictionary<string, object>();
         public Dictionary<string, float[]> VectorParameters { get; set; } = new Dictionary<string, float[]>();
@@ -63,6 +64,16 @@ namespace MaterialMappingPlugin
         public string TexturePath { get; set; }
         public string TextureName { get; set; }
         public Guid TextureGuid { get; set; }
+        public int UVChannel { get; set; } = 0;  // Default to UV0
+        public string UVChannelSource { get; set; }  // How UV channel was determined
+    }
+
+    public class MeshUVChannelInfo
+    {
+        public int AvailableUVChannels { get; set; }  // How many UV channels this mesh has
+        public List<string> UVChannelUsages { get; set; } = new List<string>();  // TexCoord0, TexCoord1, etc.
+        public Dictionary<string, int> TextureUVAssignments { get; set; } = new Dictionary<string, int>();  // Texture name → UV channel
+        public string Notes { get; set; }
     }
 
     public class LodInfo
@@ -646,6 +657,13 @@ namespace MaterialMappingPlugin
                                 if (materialDict.ContainsKey(section.MaterialId))
                                 {
                                     secInfo.MaterialName = materialDict[section.MaterialId].MaterialName;
+                                    
+                                    // Detect UV channels for this material using LOD0 section data
+                                    // Only do this once per material (use LOD0 as it has the most detail)
+                                    if (lodIdx == 0 && materialDict[section.MaterialId].UVChannelInfo == null)
+                                    {
+                                        DetectUVChannels(materialDict[section.MaterialId], section);
+                                    }
                                 }
 
                                 lodInfo.Sections.Add(secInfo);
@@ -1025,6 +1043,145 @@ namespace MaterialMappingPlugin
             blendInfo.DetectedPattern = pattern;
             blendInfo.Notes = string.Join("; ", notes);
             matInfo.BlendInfo = blendInfo;
+        }
+
+        /// <summary>
+        /// Detect UV channel assignments for textures from material parameters and mesh geometry
+        /// </summary>
+        private void DetectUVChannels(MaterialInfo matInfo, MeshSetSection section)
+        {
+            MeshUVChannelInfo uvChannelInfo = new MeshUVChannelInfo();
+            List<string> notes = new List<string>();
+
+            // Count available UV channels from mesh geometry
+            int uvChannelCount = 0;
+            if (section != null && section.GeometryDeclDesc != null && section.GeometryDeclDesc.Length > 0)
+            {
+                foreach (var elem in section.GeometryDeclDesc[0].Elements)
+                {
+                    if (elem.Usage >= VertexElementUsage.TexCoord0 && elem.Usage <= VertexElementUsage.TexCoord7)
+                    {
+                        uvChannelCount++;
+                        uvChannelInfo.UVChannelUsages.Add(elem.Usage.ToString());
+                    }
+                }
+            }
+
+            uvChannelInfo.AvailableUVChannels = uvChannelCount;
+            notes.Add($"{uvChannelCount} UV channel(s) available: {string.Join(", ", uvChannelInfo.UVChannelUsages)}");
+
+            // Check for explicit UV channel parameters in material
+            // Pattern 1: [TextureName]TexCoord or [TextureName]UVSet
+            string[] textureTypes = { "BaseColor", "Diffuse", "Normal", "Specular", "Roughness", "Metallic", "AO", "Emissive", "Height", "Mask" };
+            
+            foreach (var texType in textureTypes)
+            {
+                // Check for explicit UV channel parameters
+                string texCoordParam = texType + "TexCoord";
+                string uvSetParam = texType + "UVSet";
+                
+                if (matInfo.ScalarParameters.ContainsKey(texCoordParam))
+                {
+                    int channel = Convert.ToInt32(matInfo.ScalarParameters[texCoordParam]);
+                    uvChannelInfo.TextureUVAssignments[texType] = channel;
+                    notes.Add($"{texType} → UV{channel} (from {texCoordParam})");
+                }
+                else if (matInfo.ScalarParameters.ContainsKey(uvSetParam))
+                {
+                    int channel = Convert.ToInt32(matInfo.ScalarParameters[uvSetParam]);
+                    uvChannelInfo.TextureUVAssignments[texType] = channel;
+                    notes.Add($"{texType} → UV{channel} (from {uvSetParam})");
+                }
+            }
+
+            // Pattern 2: UseSecondUVSet boolean flag
+            bool useSecondUVSet = false;
+            if (matInfo.ScalarParameters.ContainsKey("UseSecondUVSet") && matInfo.ScalarParameters["UseSecondUVSet"] is bool boolVal)
+            {
+                useSecondUVSet = boolVal;
+            }
+
+            // Apply UV channel assignments to actual textures
+            foreach (var texEntry in matInfo.Textures)
+            {
+                string texName = texEntry.Key;
+                TextureParameterInfo texInfo = texEntry.Value;
+                
+                // Check if this texture has an explicit assignment
+                bool foundExplicitAssignment = false;
+                foreach (var assignment in uvChannelInfo.TextureUVAssignments)
+                {
+                    if (texName.Contains(assignment.Key) || texName.StartsWith(assignment.Key))
+                    {
+                        texInfo.UVChannel = assignment.Value;
+                        texInfo.UVChannelSource = "Explicit parameter";
+                        foundExplicitAssignment = true;
+                        break;
+                    }
+                }
+
+                if (!foundExplicitAssignment)
+                {
+                    // Apply heuristics based on texture type and common patterns
+                    
+                    // Lightmap textures typically use UV1
+                    if (texName.Contains("Lightmap") || texName.Contains("AO") || texName.Contains("Baked"))
+                    {
+                        texInfo.UVChannel = 1;
+                        texInfo.UVChannelSource = "Lightmap heuristic";
+                    }
+                    // Detail textures often use UV1
+                    else if (texName.Contains("Detail") && uvChannelCount > 1)
+                    {
+                        texInfo.UVChannel = 1;
+                        texInfo.UVChannelSource = "Detail heuristic";
+                    }
+                    // If UseSecondUVSet is true, use UV1 for diffuse/base
+                    else if (useSecondUVSet && (texName.Contains("Diffuse") || texName.Contains("BaseColor")))
+                    {
+                        texInfo.UVChannel = 1;
+                        texInfo.UVChannelSource = "UseSecondUVSet flag";
+                    }
+                    // Check for numbered UV suffix (e.g., Texture_UV1)
+                    else if (texName.EndsWith("_UV0"))
+                    {
+                        texInfo.UVChannel = 0;
+                        texInfo.UVChannelSource = "Texture name suffix";
+                    }
+                    else if (texName.EndsWith("_UV1"))
+                    {
+                        texInfo.UVChannel = 1;
+                        texInfo.UVChannelSource = "Texture name suffix";
+                    }
+                    else if (texName.EndsWith("_UV2"))
+                    {
+                        texInfo.UVChannel = 2;
+                        texInfo.UVChannelSource = "Texture name suffix";
+                    }
+                    // Default: most textures use UV0
+                    else
+                    {
+                        texInfo.UVChannel = 0;
+                        texInfo.UVChannelSource = "Default (UV0)";
+                    }
+                }
+            }
+
+            // Add summary to notes
+            var channelGroups = matInfo.Textures
+                .GroupBy(t => t.Value.UVChannel)
+                .OrderBy(g => g.Key);
+
+            foreach (var group in channelGroups)
+            {
+                var texNames = string.Join(", ", group.Select(t => t.Key).Take(3));
+                if (group.Count() > 3)
+                    texNames += $" (+{group.Count() - 3} more)";
+                notes.Add($"UV{group.Key}: {texNames}");
+            }
+
+            uvChannelInfo.Notes = string.Join("; ", notes);
+            matInfo.UVChannelInfo = uvChannelInfo;
         }
 
         public void ExportAllTextures(string outputDirectory, string format = "tga")

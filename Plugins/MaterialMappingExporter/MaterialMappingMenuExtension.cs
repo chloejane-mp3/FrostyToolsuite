@@ -8,14 +8,14 @@ using FrostySdk.Managers;
 
 namespace MaterialMappingPlugin
 {
-    // === Batch export: Tools > Batch Exporter > Export All Material Mappings ===
+    // === Batch export: Tools > Material Mapping > Export All Material Mappings ===
     public class MaterialMappingMenuExtension : MenuExtension
     {
         internal static ImageSource imageSource = new ImageSourceConverter()
             .ConvertFromString("pack://application:,,,/FrostyEditor;component/Images/Export.png") as ImageSource;
 
         public override string TopLevelMenuName => "Tools";
-        public override string SubLevelMenuName => "Batch Exporter";
+        public override string SubLevelMenuName => "Material Mapping";
         public override string MenuItemName => "Export All Material Mappings";
         public override ImageSource Icon => imageSource;
 
@@ -36,15 +36,15 @@ namespace MaterialMappingPlugin
         });
     }
 
-    // === Single selected mesh export: Tools > Batch Exporter > Export Selected Mesh ===
+    // === Single selected mesh export: Tools > Material Mapping > Export Selected Mesh ===
     public class MaterialMappingSelectedMenuExtension : MenuExtension
     {
         internal static ImageSource imageSource2 = new ImageSourceConverter()
             .ConvertFromString("pack://application:,,,/FrostyEditor;component/Images/Export.png") as ImageSource;
 
         public override string TopLevelMenuName => "Tools";
-        public override string SubLevelMenuName => "Batch Exporter";
-        public override string MenuItemName => "Export Single Material Mapping";
+        public override string SubLevelMenuName => "Material Mapping";
+        public override string MenuItemName => "Export Selected Mesh";
         public override ImageSource Icon => imageSource2;
 
         public override RelayCommand MenuItemClicked => new RelayCommand((o) =>
@@ -159,14 +159,14 @@ namespace MaterialMappingPlugin
         });
     }
 
-    // === Texture batch export: Tools > Batch Exporter > Export All Textures ===
+    // === Texture batch export: Tools > Material Mapping > Export All Textures ===
     public class TextureExportMenuExtension : MenuExtension
     {
         internal static ImageSource imageSource3 = new ImageSourceConverter()
             .ConvertFromString("pack://application:,,,/FrostyEditor;component/Images/Export.png") as ImageSource;
 
         public override string TopLevelMenuName => "Tools";
-        public override string SubLevelMenuName => "Batch Exporter";
+        public override string SubLevelMenuName => "Material Mapping";
         public override string MenuItemName => "Export All Textures";
         public override ImageSource Icon => imageSource3;
 
@@ -187,14 +187,14 @@ namespace MaterialMappingPlugin
         });
     }
 
-    // === FBX batch export: Tools > Batch Exporter > Export All Meshes (FBX) ===
+    // === FBX batch export: Tools > Material Mapping > Export All Meshes (FBX) ===
     public class MeshFbxExportMenuExtension : MenuExtension
     {
         internal static ImageSource imageSource4 = new ImageSourceConverter()
             .ConvertFromString("pack://application:,,,/FrostyEditor;component/Images/Export.png") as ImageSource;
 
         public override string TopLevelMenuName => "Tools";
-        public override string SubLevelMenuName => "Batch Exporter";
+        public override string SubLevelMenuName => "Material Mapping";
         public override string MenuItemName => "Export All Meshes (FBX)";
         public override ImageSource Icon => imageSource4;
 
@@ -227,12 +227,129 @@ namespace MaterialMappingPlugin
                         MessageBox.Show(
                             "FBX export complete!\n\n" +
                             "Unreal Engine Import Settings:\n" +
+                            "• Import mesh scale: 1.0 (already scaled 100x)\n" +
                             "• Materials: Use JSON mappings from earlier export\n" +
                             "• Each FBX part corresponds to a material slot",
                             "Export Complete",
                             MessageBoxButtons.OK,
                             MessageBoxIcon.Information);
                     }
+                }
+            }
+        });
+    }
+
+    // === Level data export: Tools > Material Mapping > Export All Level Data ===
+    public class LevelDataExportMenuExtension : MenuExtension
+    {
+        internal static ImageSource imageSource5 = new ImageSourceConverter()
+            .ConvertFromString("pack://application:,,,/FrostyEditor;component/Images/Export.png") as ImageSource;
+
+        public override string TopLevelMenuName => "Tools";
+        public override string SubLevelMenuName => "Material Mapping";
+        public override string MenuItemName => "Export All Level Data";
+        public override ImageSource Icon => imageSource5;
+
+        public override RelayCommand MenuItemClicked => new RelayCommand((o) =>
+        {
+            var result = MessageBox.Show(
+                "Export all level/world data to XML?\n\n" +
+                "This will export:\n" +
+                "• Entity placements and transforms\n" +
+                "• Mesh references and blueprints\n" +
+                "• World structure and bundles\n\n" +
+                "TIP: Click 'No' to run diagnostic report first\n" +
+                "Click 'Yes' to start export\n" +
+                "Click 'Cancel' to abort",
+                "Level Data Export",
+                MessageBoxButtons.YesNoCancel,
+                MessageBoxIcon.Question);
+
+            if (result == DialogResult.Yes || result == DialogResult.No)
+            {
+                using (var folderDialog = new FolderBrowserDialog())
+                {
+                    folderDialog.Description = result == DialogResult.Yes ? 
+                        "Select output directory for level XML files" :
+                        "Select output directory for diagnostic report";
+                    folderDialog.ShowNewFolderButton = true;
+
+                    if (folderDialog.ShowDialog() == DialogResult.OK)
+                    {
+                        string outputDir = folderDialog.SelectedPath;
+                        LevelDataExporter exporter = new LevelDataExporter();
+                        
+                        if (result == DialogResult.No)
+                        {
+                            // Run diagnostic
+                            exporter.DiagnoseLayerBundles(outputDir);
+                            MessageBox.Show(
+                                "Diagnostic report generated!\n\n" +
+                                "Check 'layer_diagnostic_report.txt' in the output folder.\n\n" +
+                                "This report shows:\n" +
+                                "• All SubWorldData entries\n" +
+                                "• Entries containing '_Art'\n" +
+                                "• Level groupings detected\n" +
+                                "• Sample mesh reference counts",
+                                "Diagnostic Complete",
+                                MessageBoxButtons.OK,
+                                MessageBoxIcon.Information);
+                        }
+                        else
+                        {
+                            // Run export
+                            exporter.ExportAllLevelData(outputDir);
+                            MessageBox.Show(
+                                "Level data export complete!\n\n" +
+                                "XML files contain:\n" +
+                                "• Entity positions and rotations\n" +
+                                "• References to meshes and blueprints\n" +
+                                "• Bundle information",
+                                "Export Complete",
+                                MessageBoxButtons.OK,
+                                MessageBoxIcon.Information);
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    // === Diagnostic tool: Tools > Material Mapping > Diagnose Layer Bundles ===
+    public class DiagnoseLayerBundlesMenuExtension : MenuExtension
+    {
+        internal static ImageSource imageSource6 = new ImageSourceConverter()
+            .ConvertFromString("pack://application:,,,/FrostyEditor;component/Images/Export.png") as ImageSource;
+
+        public override string TopLevelMenuName => "Tools";
+        public override string SubLevelMenuName => "Material Mapping";
+        public override string MenuItemName => "Diagnose Layer Bundles";
+        public override ImageSource Icon => imageSource6;
+
+        public override RelayCommand MenuItemClicked => new RelayCommand((o) =>
+        {
+            using (var folderDialog = new FolderBrowserDialog())
+            {
+                folderDialog.Description = "Select output directory for diagnostic report";
+                folderDialog.ShowNewFolderButton = true;
+
+                if (folderDialog.ShowDialog() == DialogResult.OK)
+                {
+                    string outputDir = folderDialog.SelectedPath;
+                    LevelDataExporter exporter = new LevelDataExporter();
+                    exporter.DiagnoseLayerBundles(outputDir);
+
+                    MessageBox.Show(
+                        "Diagnostic report generated!\n\n" +
+                        "Check 'layer_diagnostic_report.txt' in the output folder.\n\n" +
+                        "This report shows:\n" +
+                        "• All SubWorldData entries\n" +
+                        "• Entries containing '_Art'\n" +
+                        "• Level groupings detected\n" +
+                        "• Sample mesh reference counts",
+                        "Diagnostic Complete",
+                        MessageBoxButtons.OK,
+                        MessageBoxIcon.Information);
                 }
             }
         });
