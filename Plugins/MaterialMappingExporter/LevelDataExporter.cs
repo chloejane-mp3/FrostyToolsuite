@@ -437,136 +437,50 @@ namespace MaterialMappingPlugin
                 var allProps = entityType.GetProperties();
                 var propNames = string.Join(", ", allProps.Select(p => p.Name));
                 App.Logger.Log($"StaticModelGroupMemberData properties: {propNames}");
-                
-                var instanceTransformsProp = entityType.GetProperty("InstanceTransforms");
-                if (instanceTransformsProp == null)
+
+                bool extracted = false;
+
+                // 1) Direct property names on the member data
+                string[] preferredNames =
                 {
-                    App.Logger.LogWarning("InstanceTransforms property not found, trying alternatives...");
-                    
-                    // Try alternative names
-                    string[] alternatives = { "Transforms", "Instances", "InstanceObjectTransforms", "MemberTransforms" };
-                    foreach (var altName in alternatives)
+                    "InstanceTransforms", "Transforms", "Instances",
+                    "InstanceObjectTransforms", "MemberTransforms",
+                    "ObjectTransforms", "TransformArray", "TransformsArray"
+                };
+                extracted |= TryExtractInstanceTransformsFromProperties(entity, entityType, element, preferredNames);
+
+                // 2) Some games store transforms on a referenced MemberType
+                if (!extracted)
+                {
+                    var memberTypeProp = entityType.GetProperty("MemberType");
+                    if (memberTypeProp != null)
                     {
-                        instanceTransformsProp = entityType.GetProperty(altName);
-                        if (instanceTransformsProp != null)
+                        var memberTypeValue = memberTypeProp.GetValue(entity);
+                        extracted |= TryExtractInstanceTransformsFromValue(memberTypeValue, element, "MemberType");
+                    }
+                }
+
+                // 3) Last resort: scan any property that looks like it holds transforms
+                if (!extracted)
+                {
+                    foreach (var prop in allProps)
+                    {
+                        if (prop.Name.IndexOf("transform", StringComparison.OrdinalIgnoreCase) < 0 &&
+                            prop.Name.IndexOf("instance", StringComparison.OrdinalIgnoreCase) < 0)
                         {
-                            App.Logger.Log($"Found property: {altName}");
+                            continue;
+                        }
+
+                        var value = prop.GetValue(entity);
+                        if (TryExtractInstanceTransformsFromValue(value, element, prop.Name))
+                        {
+                            extracted = true;
                             break;
                         }
                     }
                 }
-                
-                if (instanceTransformsProp != null)
-                {
-                    App.Logger.Log($"Found InstanceTransforms property, type: {instanceTransformsProp.PropertyType.Name}");
-                    var instanceTransforms = instanceTransformsProp.GetValue(entity);
-                    
-                    if (instanceTransforms == null)
-                    {
-                        App.Logger.LogWarning("InstanceTransforms property returned null");
-                        return;
-                    }
-                    
-                    App.Logger.Log($"InstanceTransforms has value, type: {instanceTransforms.GetType().Name}");
-                    
-                    XElement instanceTransformsElement = new XElement("InstanceTransforms");
-                    
-                    int instanceIndex = 0;
-                    foreach (var transform in instanceTransforms)
-                    {
-                        try
-                        {
-                            var transformType = transform.GetType();
-                            XElement instanceElement = new XElement("Instance");
-                            
-                            // Extract LinearTransform (contains right, up, forward, trans)
-                            var linearTransformProp = transformType.GetProperty("Transform");
-                            if (linearTransformProp == null)
-                                linearTransformProp = transformType.GetProperty("LinearTransform");
-                            
-                            if (linearTransformProp != null)
-                            {
-                                var linearTransform = linearTransformProp.GetValue(transform);
-                                if (linearTransform != null)
-                                {
-                                    var ltType = linearTransform.GetType();
-                                    
-                                    // Extract position (trans)
-                                    var transProp = ltType.GetProperty("trans");
-                                    if (transProp != null)
-                                    {
-                                        var trans = transProp.GetValue(linearTransform);
-                                        if (trans != null)
-                                        {
-                                            var transType = trans.GetType();
-                                            var xProp = transType.GetProperty("x");
-                                            var yProp = transType.GetProperty("y");
-                                            var zProp = transType.GetProperty("z");
-                                            
-                                            if (xProp != null && yProp != null && zProp != null)
-                                            {
-                                                instanceElement.Add(new XElement("Position",
-                                                    new XAttribute("X", xProp.GetValue(trans)),
-                                                    new XAttribute("Y", yProp.GetValue(trans)),
-                                                    new XAttribute("Z", zProp.GetValue(trans))
-                                                ));
-                                            }
-                                        }
-                                    }
-                                    
-                                    // Extract rotation matrix (right, up, forward)
-                                    XElement rotationElement = new XElement("Rotation");
-                                    
-                                    string[] vectorNames = { "right", "up", "forward" };
-                                    foreach (var vectorName in vectorNames)
-                                    {
-                                        var vectorProp = ltType.GetProperty(vectorName);
-                                        if (vectorProp != null)
-                                        {
-                                            var vector = vectorProp.GetValue(linearTransform);
-                                            if (vector != null)
-                                            {
-                                                var vecType = vector.GetType();
-                                                var xProp = vecType.GetProperty("x");
-                                                var yProp = vecType.GetProperty("y");
-                                                var zProp = vecType.GetProperty("z");
-                                                
-                                                if (xProp != null && yProp != null && zProp != null)
-                                                {
-                                                    string elementName = char.ToUpper(vectorName[0]) + vectorName.Substring(1);
-                                                    rotationElement.Add(new XElement(elementName,
-                                                        new XAttribute("X", xProp.GetValue(vector)),
-                                                        new XAttribute("Y", yProp.GetValue(vector)),
-                                                        new XAttribute("Z", zProp.GetValue(vector))
-                                                    ));
-                                                }
-                                            }
-                                        }
-                                    }
-                                    
-                                    if (rotationElement.HasElements)
-                                        instanceElement.Add(rotationElement);
-                                }
-                            }
-                            
-                            if (instanceElement.HasElements)
-                            {
-                                instanceTransformsElement.Add(instanceElement);
-                                instanceIndex++;
-                            }
-                        }
-                        catch (Exception ex)
-                        {
-                            App.Logger.LogError($"Error extracting instance {instanceIndex}: {ex.Message}");
-                        }
-                    }
-                    
-                    App.Logger.Log($"Extracted {instanceIndex} instance transforms");
-                    
-                    if (instanceTransformsElement.HasElements)
-                        element.Add(instanceTransformsElement);
-                }
-                else
+
+                if (!extracted)
                 {
                     App.Logger.LogWarning("Could not find InstanceTransforms or any alternative property");
                 }
@@ -575,6 +489,169 @@ namespace MaterialMappingPlugin
             {
                 App.Logger.LogError($"ExtractInstanceTransforms error: {ex.Message}");
             }
+        }
+
+        private bool TryExtractInstanceTransformsFromProperties(dynamic entity, Type entityType, XElement element, IEnumerable<string> propertyNames)
+        {
+            foreach (var propName in propertyNames)
+            {
+                var property = entityType.GetProperty(propName);
+                if (property == null)
+                    continue;
+
+                var value = property.GetValue(entity);
+                if (TryExtractInstanceTransformsFromValue(value, element, propName))
+                    return true;
+            }
+
+            return false;
+        }
+
+        private bool TryExtractInstanceTransformsFromValue(object value, XElement element, string sourceName)
+        {
+            if (value == null)
+                return false;
+
+            if (value is PointerRef pr)
+            {
+                if (pr.Type == PointerRefType.Internal && pr.Internal != null)
+                    return TryExtractInstanceTransformsFromValue(pr.Internal, element, sourceName + ".Internal");
+                return false;
+            }
+
+            if (value is System.Collections.IEnumerable enumerable && !(value is string))
+            {
+                XElement instanceTransformsElement = new XElement("InstanceTransforms",
+                    new XAttribute("Source", sourceName)
+                );
+
+                int instanceIndex = 0;
+                foreach (var item in enumerable)
+                {
+                    if (TryAddInstanceTransform(item, instanceTransformsElement))
+                        instanceIndex++;
+                }
+
+                if (instanceIndex > 0)
+                {
+                    App.Logger.Log($"Extracted {instanceIndex} instance transforms from {sourceName}");
+                    element.Add(instanceTransformsElement);
+                    return true;
+                }
+
+                return false;
+            }
+
+            // If the value itself has a nested transforms collection, try that
+            var valueType = value.GetType();
+            string[] nestedNames = { "InstanceTransforms", "Transforms", "TransformArray", "TransformsArray" };
+            foreach (var nestedName in nestedNames)
+            {
+                var nestedProp = valueType.GetProperty(nestedName);
+                if (nestedProp != null)
+                {
+                    var nestedValue = nestedProp.GetValue(value);
+                    if (TryExtractInstanceTransformsFromValue(nestedValue, element, sourceName + "." + nestedName))
+                        return true;
+                }
+            }
+
+            return false;
+        }
+
+        private bool TryAddInstanceTransform(object transformItem, XElement instanceTransformsElement)
+        {
+            if (transformItem == null)
+                return false;
+
+            object linearTransform = null;
+            var itemType = transformItem.GetType();
+
+            var linearTransformProp = itemType.GetProperty("Transform") ?? itemType.GetProperty("LinearTransform");
+            if (linearTransformProp != null)
+                linearTransform = linearTransformProp.GetValue(transformItem);
+
+            if (linearTransform == null && LooksLikeLinearTransform(itemType))
+                linearTransform = transformItem;
+
+            if (linearTransform == null)
+                return false;
+
+            XElement instanceElement = new XElement("Instance");
+
+            var ltType = linearTransform.GetType();
+
+            // Extract position (trans)
+            var transProp = ltType.GetProperty("trans");
+            if (transProp != null)
+            {
+                var trans = transProp.GetValue(linearTransform);
+                if (trans != null)
+                {
+                    var transType = trans.GetType();
+                    var xProp = transType.GetProperty("x");
+                    var yProp = transType.GetProperty("y");
+                    var zProp = transType.GetProperty("z");
+
+                    if (xProp != null && yProp != null && zProp != null)
+                    {
+                        instanceElement.Add(new XElement("Position",
+                            new XAttribute("X", xProp.GetValue(trans)),
+                            new XAttribute("Y", yProp.GetValue(trans)),
+                            new XAttribute("Z", zProp.GetValue(trans))
+                        ));
+                    }
+                }
+            }
+
+            // Extract rotation matrix (right, up, forward)
+            XElement rotationElement = new XElement("Rotation");
+
+            string[] vectorNames = { "right", "up", "forward" };
+            foreach (var vectorName in vectorNames)
+            {
+                var vectorProp = ltType.GetProperty(vectorName);
+                if (vectorProp != null)
+                {
+                    var vector = vectorProp.GetValue(linearTransform);
+                    if (vector != null)
+                    {
+                        var vecType = vector.GetType();
+                        var xProp = vecType.GetProperty("x");
+                        var yProp = vecType.GetProperty("y");
+                        var zProp = vecType.GetProperty("z");
+
+                        if (xProp != null && yProp != null && zProp != null)
+                        {
+                            string elementName = char.ToUpper(vectorName[0]) + vectorName.Substring(1);
+                            rotationElement.Add(new XElement(elementName,
+                                new XAttribute("X", xProp.GetValue(vector)),
+                                new XAttribute("Y", yProp.GetValue(vector)),
+                                new XAttribute("Z", zProp.GetValue(vector))
+                            ));
+                        }
+                    }
+                }
+            }
+
+            if (rotationElement.HasElements)
+                instanceElement.Add(rotationElement);
+
+            if (instanceElement.HasElements)
+            {
+                instanceTransformsElement.Add(instanceElement);
+                return true;
+            }
+
+            return false;
+        }
+
+        private bool LooksLikeLinearTransform(Type type)
+        {
+            return type.GetProperty("trans") != null &&
+                   type.GetProperty("right") != null &&
+                   type.GetProperty("up") != null &&
+                   type.GetProperty("forward") != null;
         }
 
         /// <summary>
