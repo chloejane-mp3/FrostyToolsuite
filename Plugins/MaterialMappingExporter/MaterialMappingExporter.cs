@@ -37,6 +37,7 @@ namespace MaterialMappingPlugin
         public Dictionary<string, TextureParameterInfo> Textures { get; set; } = new Dictionary<string, TextureParameterInfo>();
         public Dictionary<string, object> ScalarParameters { get; set; } = new Dictionary<string, object>();
         public Dictionary<string, float[]> VectorParameters { get; set; } = new Dictionary<string, float[]>();
+        public EmissiveInfo Emissive { get; set; }
     }
 
     public class UVTilingInfo
@@ -72,7 +73,24 @@ namespace MaterialMappingPlugin
     {
         public int AvailableUVChannels { get; set; }  // How many UV channels this mesh has
         public List<string> UVChannelUsages { get; set; } = new List<string>();  // TexCoord0, TexCoord1, etc.
-        public Dictionary<string, int> TextureUVAssignments { get; set; } = new Dictionary<string, int>();  // Texture name → UV channel
+        public Dictionary<string, int> TextureUVAssignments { get; set; } = new Dictionary<string, int>();  // Texture name â†’ UV channel
+        public string Notes { get; set; }
+    }
+
+    public class EmissiveInfo
+    {
+        public bool HasEmissive { get; set; }
+        public string TextureParameter { get; set; }
+        public string TexturePath { get; set; }
+        public string TextureName { get; set; }
+        public int? UVChannel { get; set; }
+        public string UVChannelSource { get; set; }
+        public string TintParameter { get; set; }
+        public float[] TintColor { get; set; }
+        public string StrengthParameter { get; set; }
+        public float? Strength { get; set; }
+        public string EnabledParameter { get; set; }
+        public bool? Enabled { get; set; }
         public string Notes { get; set; }
     }
 
@@ -445,6 +463,7 @@ namespace MaterialMappingPlugin
                                     }
                                     
                                     ExtractVectorParameters(shaderData, matInfo);
+                                    ExtractFloatParameters(shaderData, matInfo);
                                     ExtractBoolParameters(shaderData, matInfo);
                                     ExtractConditionalParameters(shaderData, matInfo);
                                 }
@@ -497,6 +516,7 @@ namespace MaterialMappingPlugin
                                                         foundTextures = ExtractTextureParameters(shaderPreset.TextureParameters, matInfo);
                                                         
                                                         ExtractVectorParameters(shaderPreset, matInfo);
+                                                        ExtractFloatParameters(shaderPreset, matInfo);
                                                         ExtractBoolParameters(shaderPreset, matInfo);
                                                         ExtractConditionalParameters(shaderPreset, matInfo);
                                                     }
@@ -570,6 +590,7 @@ namespace MaterialMappingPlugin
                                     }
                                     
                                     ExtractVectorParameters(shader, matInfo);
+                                    ExtractFloatParameters(shader, matInfo);
                                     ExtractBoolParameters(shader, matInfo);
                                     ExtractConditionalParameters(shader, matInfo);
                                 }
@@ -625,6 +646,9 @@ namespace MaterialMappingPlugin
 
                         // Detect texture layer blending patterns
                         DetectTextureBlending(matInfo);
+
+                        // Build a UE-friendly emissive summary from the raw shader parameters
+                        DetectEmissive(matInfo);
 
                         materialDict[i] = matInfo;
                         mapping.Materials.Add(matInfo);
@@ -760,6 +784,30 @@ namespace MaterialMappingPlugin
             }
         }
 
+        private void ExtractFloatParameters(dynamic shader, MaterialInfo matInfo)
+        {
+            try
+            {
+                if (shader.FloatParameters == null)
+                    return;
+
+                foreach (dynamic floatParam in shader.FloatParameters)
+                {
+                    try
+                    {
+                        string paramName = floatParam.ParameterName;
+                        float value = Convert.ToSingle(floatParam.Value);
+                        matInfo.ScalarParameters[paramName] = value;
+                    }
+                    catch { }
+                }
+            }
+            catch
+            {
+                // Not all profiles expose FloatParameters
+            }
+        }
+
         private void ExtractBoolParameters(dynamic shader, MaterialInfo matInfo)
         {
             if (shader.BoolParameters != null)
@@ -892,7 +940,7 @@ namespace MaterialMappingPlugin
                 string texName = texEntry.Key;
                 int layer = 0;
 
-                // Parse layer from suffix (BaseColor → layer 0, BaseColor2 → layer 1, etc.)
+                // Parse layer from suffix (BaseColor â†’ layer 0, BaseColor2 â†’ layer 1, etc.)
                 if (texName.EndsWith("2")) 
                     layer = 1;
                 else if (texName.EndsWith("3")) 
@@ -1084,13 +1132,13 @@ namespace MaterialMappingPlugin
                 {
                     int channel = Convert.ToInt32(matInfo.ScalarParameters[texCoordParam]);
                     uvChannelInfo.TextureUVAssignments[texType] = channel;
-                    notes.Add($"{texType} → UV{channel} (from {texCoordParam})");
+                    notes.Add($"{texType} â†’ UV{channel} (from {texCoordParam})");
                 }
                 else if (matInfo.ScalarParameters.ContainsKey(uvSetParam))
                 {
                     int channel = Convert.ToInt32(matInfo.ScalarParameters[uvSetParam]);
                     uvChannelInfo.TextureUVAssignments[texType] = channel;
-                    notes.Add($"{texType} → UV{channel} (from {uvSetParam})");
+                    notes.Add($"{texType} â†’ UV{channel} (from {uvSetParam})");
                 }
             }
 
@@ -1182,6 +1230,104 @@ namespace MaterialMappingPlugin
 
             uvChannelInfo.Notes = string.Join("; ", notes);
             matInfo.UVChannelInfo = uvChannelInfo;
+
+            // Refresh emissive after UV assignment so the exported emissive texture carries the final UV channel.
+            DetectEmissive(matInfo);
+        }
+
+        private void DetectEmissive(MaterialInfo matInfo)
+        {
+            EmissiveInfo emissiveInfo = new EmissiveInfo();
+            List<string> notes = new List<string>();
+
+            string[] textureCandidates =
+            {
+                "Emissive", "EmissiveTexture", "EmissiveMap", "Glow", "GlowMap", "Emission", "Ex"
+            };
+            string[] tintCandidates =
+            {
+                "EmissiveColor", "Emissive_Color", "EmissiveTint", "GlowColor", "GlowTint", "EmissionColor", "MP_Light"
+            };
+            string[] strengthCandidates =
+            {
+                "Emissive_Intensity", "EmissiveIntensity", "EmissiveStrength", "GlowStrength",
+                "EmissiveMultiplier", "EmissionStrength", "EmissiveExposureFactor"
+            };
+            string[] enabledCandidates =
+            {
+                "EmissiveEnable", "UseEmissive", "EnableEmissive", "GlowEnable"
+            };
+
+            foreach (var candidate in textureCandidates)
+            {
+                var match = matInfo.Textures.FirstOrDefault(t =>
+                    t.Key.Equals(candidate, StringComparison.OrdinalIgnoreCase) ||
+                    t.Key.IndexOf(candidate, StringComparison.OrdinalIgnoreCase) >= 0);
+                if (!string.IsNullOrEmpty(match.Key))
+                {
+                    emissiveInfo.TextureParameter = match.Key;
+                    emissiveInfo.TexturePath = match.Value.TexturePath;
+                    emissiveInfo.TextureName = match.Value.TextureName;
+                    emissiveInfo.UVChannel = match.Value.UVChannel;
+                    emissiveInfo.UVChannelSource = match.Value.UVChannelSource;
+                    notes.Add($"Texture from {match.Key}");
+                    break;
+                }
+            }
+
+            foreach (var candidate in tintCandidates)
+            {
+                var match = matInfo.VectorParameters.FirstOrDefault(v =>
+                    v.Key.Equals(candidate, StringComparison.OrdinalIgnoreCase));
+                if (!string.IsNullOrEmpty(match.Key))
+                {
+                    emissiveInfo.TintParameter = match.Key;
+                    emissiveInfo.TintColor = match.Value.Take(3).ToArray();
+                    notes.Add($"Tint from {match.Key}");
+                    break;
+                }
+            }
+
+            foreach (var candidate in strengthCandidates)
+            {
+                if (matInfo.ScalarParameters.TryGetValue(candidate, out object strengthValue))
+                {
+                    try
+                    {
+                        emissiveInfo.StrengthParameter = candidate;
+                        emissiveInfo.Strength = Convert.ToSingle(strengthValue);
+                        notes.Add($"Strength from {candidate}");
+                        break;
+                    }
+                    catch { }
+                }
+            }
+
+            foreach (var candidate in enabledCandidates)
+            {
+                if (matInfo.ScalarParameters.TryGetValue(candidate, out object enabledValue) && enabledValue is bool boolValue)
+                {
+                    emissiveInfo.EnabledParameter = candidate;
+                    emissiveInfo.Enabled = boolValue;
+                    notes.Add($"Enable flag from {candidate}");
+                    break;
+                }
+            }
+
+            if (emissiveInfo.TextureParameter == null && matInfo.Textures.ContainsKey("Mask") &&
+                (emissiveInfo.TintParameter != null || emissiveInfo.StrengthParameter != null))
+            {
+                notes.Add("No dedicated emissive texture found; emissive may be masked from another texture such as Mask.b");
+            }
+
+            emissiveInfo.HasEmissive =
+                emissiveInfo.TextureParameter != null ||
+                emissiveInfo.TintParameter != null ||
+                emissiveInfo.StrengthParameter != null ||
+                (emissiveInfo.Enabled.HasValue && emissiveInfo.Enabled.Value);
+
+            emissiveInfo.Notes = notes.Count > 0 ? string.Join("; ", notes) : "No emissive-specific parameters detected";
+            matInfo.Emissive = emissiveInfo;
         }
 
         public void ExportAllTextures(string outputDirectory, string format = "tga")
